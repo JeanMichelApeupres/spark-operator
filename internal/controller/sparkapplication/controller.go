@@ -219,7 +219,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, options controller.Optio
 		).
 		Watches(
 			&v1beta2.SparkApplication{},
-			NewSparkApplicationEventHandler(r.options.SparkApplicationMetrics),
+			NewSparkApplicationEventHandler(mgr.GetClient(), r.options.SparkApplicationMetrics),
 			builder.WithPredicates(
 				NewSparkApplicationEventFilter(
 					mgr.GetClient(),

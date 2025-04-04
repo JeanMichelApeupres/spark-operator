@@ -19,18 +19,18 @@ package sparkapplication
 import (
 	"context"
 
+	"github.com/kubeflow/spark-operator/api/v1beta2"
+	"github.com/kubeflow/spark-operator/internal/metrics"
+	"github.com/kubeflow/spark-operator/pkg/common"
+	"github.com/kubeflow/spark-operator/pkg/util"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-
-	"github.com/kubeflow/spark-operator/api/v1beta2"
-	"github.com/kubeflow/spark-operator/internal/metrics"
-	"github.com/kubeflow/spark-operator/pkg/common"
-	"github.com/kubeflow/spark-operator/pkg/util"
 )
 
 // SparkPodEventHandler watches Spark pods and update the SparkApplication objects accordingly.
@@ -146,14 +146,16 @@ func (h *SparkPodEventHandler) enqueueSparkAppForUpdate(ctx context.Context, pod
 
 // EventHandler watches SparkApplication events.
 type EventHandler struct {
+	client  client.Client
 	metrics *metrics.SparkApplicationMetrics
 }
 
 var _ handler.EventHandler = &EventHandler{}
 
 // NewSparkApplicationEventHandler creates a new SparkApplicationEventHandler instance.
-func NewSparkApplicationEventHandler(metrics *metrics.SparkApplicationMetrics) *EventHandler {
+func NewSparkApplicationEventHandler(client client.Client, metrics *metrics.SparkApplicationMetrics) *EventHandler {
 	return &EventHandler{
+		client:  client,
 		metrics: metrics,
 	}
 }
@@ -197,6 +199,26 @@ func (h *EventHandler) Update(ctx context.Context, event event.UpdateEvent, queu
 func (h *EventHandler) Delete(ctx context.Context, event event.DeleteEvent, queue workqueue.TypedRateLimitingInterface[ctrl.Request]) {
 	app, ok := event.Object.(*v1beta2.SparkApplication)
 	if !ok {
+		return
+	}
+	// When not using the webhook, we need to delete the pod driver when the Spark App is getting killed
+	// Driver pod name is made of SparkApp + '-driver' suffix
+	podDriver := app.Name + "-driver"
+	ns := app.Namespace
+
+	// Initializing the Pod structure with the name of the pod & the namespace
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns,
+			Name:      podDriver,
+		},
+	}
+
+	// Now the driver is being deleted (its executors will also be deleted at the same time)
+	// Even if we're facing an error we only print it as Info message because event_handler is just a read-only handler
+	err := h.client.Delete(ctx, pod)
+	if err != nil {
+		logger.Info("Unable to delete the Spark Driver: %v\n", err, "name", podDriver, "namespace", ns)
 		return
 	}
 
