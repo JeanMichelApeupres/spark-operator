@@ -24,6 +24,7 @@ import (
 	"github.com/kubeflow/spark-operator/pkg/common"
 	"github.com/kubeflow/spark-operator/pkg/util"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
@@ -216,9 +217,12 @@ func (h *EventHandler) Delete(ctx context.Context, event event.DeleteEvent, queu
 
 	// Now the driver is being deleted (its executors will also be deleted at the same time)
 	// Even if we're facing an error we only print it as Info message because event_handler is just a read-only handler
-	err := h.client.Delete(ctx, pod)
-	if err != nil {
-		logger.Info("Unable to delete the Spark Driver: %v\n", err, "name", podDriver, "namespace", ns)
+	if err := h.client.Delete(ctx, pod); err != nil {
+		// The driver pod may already be gone (e.g. already deleted or never created),
+		// which is expected, so ignore NotFound errors.
+		if !apierrors.IsNotFound(err) {
+			logger.Info("Unable to delete the Spark Driver", "error", err, "name", podDriver, "namespace", ns)
+		}
 		return
 	}
 
